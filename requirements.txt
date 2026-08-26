@@ -1,0 +1,20 @@
+torch>=2.4
+einops>=0.7
+numpy
+safetensors
+pyyaml
+
+# ODE solver used by the generation pipelines
+torchdiffeq>=0.2
+
+# video decoding / encoding for the scripts in scripts/
+av>=12
+pillow
+
+# fetching the released weights (scripts/download_weights.py)
+huggingface_hub
+
+# Optional. Attention runs on PyTorch SDPA by default; installing FlashAttention
+# enables the faster kernels the paper's experiments used, including the varlen
+# kernel for packed variable-length token sequences. Results are equivalent.
+# flash-attn>=2.6

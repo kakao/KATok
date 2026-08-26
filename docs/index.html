@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KATok — Keep-or-Drop? Adaptive Tokenizer for Compact Video Representation</title>
+<meta name="description" content="KATok is a transformer video VAE that learns content-adaptive keep-or-drop tokenization for compact reconstruction and efficient diffusion-based generation.">
+<meta name="author" content="Yeonkyeong Lee, Hyunsung Go, Jongmin Kim, Sewoong Lim, Donghoon Lee">
+<meta property="og:title" content="KATok: Keep-or-Drop? Adaptive Tokenizer for Compact Video Representation">
+<meta property="og:description" content="Adaptive keep-or-drop video tokenization: 31.24 PSNR / 5.12 rFVD with 366 tokens on Panda-70M at 256²×16.">
+<meta property="og:image" content="static/overview.png">
+<meta property="og:type" content="website">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <nav class="topbar" aria-label="Primary">
+      <a class="brand" href="#top">KATok</a>
+      <div class="navlinks">
+        <a href="#problem">Problem</a>
+        <a href="#method">Method</a>
+        <a href="#reconstruction">Reconstruction</a>
+        <a href="#generation">Generation</a>
+        <a href="#token-control">Token Count</a>
+      </div>
+    </nav>
+
+    <div class="hero-copy">
+      <p class="eyebrow">ECCV 2026</p>
+      <h1><span class="grad">Keep-or-Drop?</span> Adaptive Tokenizer for Compact Video Representation</h1>
+      <p class="authors">Yeonkyeong Lee · Hyunsung Go · Jongmin Kim · Sewoong Lim · Donghoon Lee<sup>†</sup></p>
+      <p class="affil">Kakao Corp. · <sup>†</sup>corresponding author</p>
+    </div>
+
+    <div class="hero-actions" aria-label="Project links">
+      <a class="button disabled" href="#" aria-disabled="true" tabindex="-1">arXiv soon</a>
+      <a class="button disabled" href="#" aria-disabled="true" tabindex="-1">Code soon</a>
+      <a class="button disabled" href="#" aria-disabled="true" tabindex="-1">&#129303; Weights soon</a>
+      <a class="button ghost" href="#citation">BibTeX</a>
+    </div>
+
+    <figure class="hero-reel">
+      <video src="static/all_clips_512_96.mp4" autoplay loop muted playsinline controls></video>
+      <figcaption><strong>512²×96 showcase.</strong><br>Input, reconstruction, and the tokens that survived across multiple clips.<br>Black tiles are latent tokens dropped by the adaptive selector.</figcaption>
+    </figure>
+
+    <div class="tldr" aria-label="Contributions">
+      <span class="card-tag">Contributions</span>
+      <ul>
+        <li><strong>Adaptive tokenization.</strong> A transformer video VAE learns a per-token <em>keep-or-drop</em> decision jointly with the latents, so each clip's token count is decided by its content — no preset budget, no inference-time search. The mask gates decoding as a <strong>soft attention mask</strong>, and an <strong>asymmetric coarse-to-fine decoder</strong> recovers detail from the compact latent set. On Panda-70M at 256²×16 this comes to <strong>366</strong> active tokens on average at <strong>31.24</strong> PSNR / <strong>5.12</strong> rFVD.</li>
+        <li><strong>Sparse-token generation.</strong> Dropping tokens breaks spatial layout for downstream diffusion; a lightweight cascaded <em>mask prior</em> (and a joint content–position variant) restores it, reaching <strong>61.53</strong> gFVD on UCF-101 with 6.9× faster generator training than a dense transformer tokenizer.</li>
+      </ul>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section id="problem" class="story">
+    <div class="section-kicker">Problem</div>
+    <div class="section-head">
+      <h2>Fixed token grids waste capacity on video redundancy.</h2>
+      <p>A static background, a repeated frame, and a fast-moving object do not carry the same amount of information. Yet fixed-ratio video VAEs encode them with the same latent grid, so token count keeps scaling with space and time even when many regions are redundant.</p>
+    </div>
+
+    <figure class="problem-figure">
+      <img src="static/token_allocation.png" alt="Static versus motion token allocation: fixed tokenizers keep all grid cells for both static and motion clips, while KATok drops more redundant tokens in the static clip and keeps more tokens in the motion-rich clip.">
+      <figcaption>Fixed grids keep every token; KATok keeps more where motion and detail need it.</figcaption>
+    </figure>
+
+    <div class="flow-cards">
+      <article class="flow-card fixed">
+        <span class="card-tag">Fixed tokenization</span>
+        <h3>Tokens scale with H × W × T</h3>
+        <p>The latent grid grows with resolution and duration, regardless of how much new information each patch contains.</p>
+      </article>
+      <article class="flow-card active">
+        <span class="card-tag">Flexible is not adaptive</span>
+        <h3>A budget still has to be chosen</h3>
+        <p>Variable-length tokenizers can expose a token count, but selecting the right count per sample often needs search or extra overhead.</p>
+      </article>
+      <article class="flow-card saved">
+        <span class="card-tag">What KATok targets</span>
+        <h3>Let content decide N<sub>eff</sub></h3>
+        <p>Adaptive tokenization should remove redundant tokens automatically while preserving enough structure for reconstruction and generation.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="method" class="method">
+    <div class="section-kicker">Method</div>
+    <div class="section-head">
+      <h2>A differentiable keep-or-drop bottleneck.</h2>
+      <p>KATok leaves the VAE pipeline intact, but adds one learned decision at the latent bottleneck: for each encoded token, should it be kept or dropped?</p>
+    </div>
+
+    <figure class="architecture">
+      <div class="figure-light">
+        <img src="static/overview.png" alt="KATok architecture: video patches are encoded into latent tokens; the adaptive token selector predicts keep probabilities; masked latents and decoder queries reconstruct the video through masked attention.">
+      </div>
+      <figcaption>The same mask gates latent values and decoder attention, while the finer decoder query grid reconstructs detail from compact coarse latents.</figcaption>
+    </figure>
+
+    <div class="method-copy">
+      <p>The selector predicts the latent posterior and keep/drop logits from the same encoder embedding, so sparsity is learned with the representation rather than applied after encoding.</p>
+      <p>KATok also uses asymmetric patching: the encoder tokenizes videos coarsely with 16²×8 patches, while the decoder reconstructs on a finer 8²×4 query grid. The latent set stays compact, but reconstruction can still recover finer detail.</p>
+      <p><strong>Training.</strong> Gumbel-Softmax keeps the token mask differentiable, and the decoder receives it as a soft attention mask while a sparsity loss rewards compact token sets.<br><strong>Inference.</strong> Hard masks remove redundant tokens before decoding, with the corresponding attention mask blocking dropped tokens in decoder attention.</p>
+    </div>
+  </section>
+
+  <section id="reconstruction" class="media-section">
+    <div class="section-kicker">Reconstruction</div>
+    <div class="section-head">
+      <h2>The mask concentrates capacity where the video changes.</h2>
+      <p>This example is a 256²×16 clip encoded with 370 tokens in total: 368 content tokens plus 2 register tokens, reaching 30.05 PSNR.<br>Black tiles are dropped latent patches. KATok retains tokens around motion and detailed regions, while static or homogeneous areas are aggressively compressed.</p>
+    </div>
+
+    <div class="trio">
+      <figure class="clip">
+        <div class="label">Input</div>
+        <video src="static/recon_input.mp4" autoplay loop muted playsinline></video>
+      </figure>
+      <figure class="clip">
+        <div class="label">Reconstruction</div>
+        <video src="static/recon_output.mp4" autoplay loop muted playsinline></video>
+      </figure>
+      <figure class="clip">
+        <div class="label">Kept tokens</div>
+        <video src="static/recon_tokens.mp4" autoplay loop muted playsinline></video>
+      </figure>
+    </div>
+  </section>
+
+  <section id="results">
+    <div class="section-kicker">Results</div>
+    <div class="section-head">
+      <h2>Compact representation without giving up fidelity.</h2>
+      <p>On Panda-70M validation, KATok improves reconstruction metrics while using far fewer active tokens than fixed or search-based baselines in the same continuous-token VAE family.</p>
+    </div>
+
+    <p class="result-highlight">At 256²×16, KATok encodes each video with <strong>366</strong> active tokens on average.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th><th>Resolution</th><th>#Tokens</th><th>Channels</th>
+            <th>Comp. ↑</th><th>PSNR ↑</th><th>LPIPS ↓</th><th>SSIM ↑</th><th>rFVD ↓</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>OmniTokenizer-VAE</td><td>256²×17</td><td>5120</td><td>8</td><td>96</td><td>28.10</td><td>0.05</td><td>0.88</td><td>7.84</td></tr>
+          <tr><td>ElasticTok-KL</td><td>256²×16</td><td>3845.56</td><td>8</td><td>102.25</td><td>30.52</td><td>0.06</td><td>0.91</td><td>12.37</td></tr>
+          <tr class="ours"><td>KATok</td><td>256²×16</td><td>366.24</td><td>64</td><td>134.21</td><td>31.24</td><td>0.04</td><td>0.94</td><td>5.12</td></tr>
+          <tr><td>OmniTokenizer-VAE</td><td>512²×33</td><td>36864</td><td>8</td><td>96</td><td>24.07</td><td>0.06</td><td>0.80</td><td>16.85</td></tr>
+          <tr class="ours"><td>KATok</td><td>512²×32</td><td>1554.24</td><td>64</td><td>253.00</td><td>33.23</td><td>0.05</td><td>0.95</td><td>6.40</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Panda-70M validation. <code>Comp.</code> is <code>H·W·T·3 / (#tokens · channels)</code>; <code>#Tokens</code> is the average active-token count for adaptive methods.</p>
+  </section>
+
+  <section id="generation">
+    <div class="section-kicker">Generation</div>
+    <div class="section-head">
+      <h2>Sparse latents need spatial grounding.</h2>
+      <p>KATok uses the learned VAE as the tokenizer for downstream flow-matching video generation. After token dropping, the generator must recover not only what each sparse token contains, but also where it belongs.</p>
+    </div>
+
+    <div class="generation-group generation-group-lead">
+      <p class="generation-subtitle">Why positions matter</p>
+      <p>Adaptive tokenization removes redundant grid cells, so sparse latent tokens no longer carry an implicit dense layout. For generation, KATok must model both the latent content and the positions where those latents should be decoded.</p>
+    </div>
+
+    <div class="generation-group">
+      <p class="generation-subtitle">Position-aware sparse generation</p>
+      <p>KATok studies two variants: a cascaded mask prior that predicts active positions before content generation, and a joint variant that denoises content and coordinates together.</p>
+      <div class="generation-methods">
+        <figure class="generation-method">
+          <img src="static/cascaded_gen.png" alt="Paper figure for cascaded generation: a mask prior predicts active positions, then a sparse content DiT generates tokens conditioned on positional embeddings.">
+          <figcaption><strong>Cascaded mask-prior conditioning.</strong> The default strategy first predicts a binary occupancy mask, extracts active positions, and conditions the sparse content generator on those positions.</figcaption>
+        </figure>
+        <figure class="generation-method">
+          <img src="static/joint_gen.png" alt="Paper figure for joint generation: content tokens and position tokens are concatenated and denoised with decoupled noise schedules.">
+          <figcaption><strong>Joint content-position generation.</strong> The ablation concatenates 3D coordinates with latent content and denoises them together with decoupled noise schedules.</figcaption>
+        </figure>
+      </div>
+    </div>
+
+    <div class="generation-group">
+      <p class="generation-subtitle">Content-position misalignment</p>
+      <p>A content-only flow model can produce plausible sparse token values while placing them at the wrong spatio-temporal locations, leading to unstable boundaries and temporal inconsistencies.</p>
+      <figure class="paper-figure generation-wide">
+        <img src="static/misalign.png" alt="Paper Figure 9: qualitative comparison showing that naive sparse generation causes content-position misalignment, while joint and cascaded generation reduce the mismatch.">
+        <figcaption><strong>Fig. 9.</strong> Naive sparse generation can misalign content and position; joint and cascaded generation reduce the mismatch.</figcaption>
+      </figure>
+      <p class="generation-result-line">Using the same tokenizer and SiT-XL content model (686.29M parameters) on UCF-101, gFVD improves from 95.69 with naive sparse flow matching to 73.16 with joint content-position generation (686.59M total) and 61.53 with cascaded mask-prior conditioning (694.65M total, including an 8.3M mask prior).</p>
+    </div>
+  </section>
+
+  <section id="token-control">
+    <div class="section-kicker">Generation</div>
+    <div class="section-head">
+      <h2>Emergent token-count control.</h2>
+      <p>Token count can also modulate generation: higher budgets produce richer motion and detail. Each grid shows 16 unconditional SkyTimelapse samples from the cascaded model — same settings, only the token budget differs.</p>
+    </div>
+    <div class="budget-preview" aria-label="Token count comparison: 200 vs 400 tokens">
+      <figure class="future-clip">
+        <div class="label">200 tokens</div>
+        <video src="static/sky_200tok_4x4.mp4" autoplay loop muted playsinline></video>
+      </figure>
+      <figure class="future-clip">
+        <div class="label">400 tokens</div>
+        <video src="static/sky_400tok_4x4.mp4" autoplay loop muted playsinline></video>
+      </figure>
+    </div>
+    <p class="note">First 16 samples of each budget, no curation. Low budgets yield calm, mostly clear skies; higher budgets bring denser cloud structure and stronger motion.</p>
+  </section>
+
+  <section id="citation">
+    <div class="section-kicker">Citation</div>
+    <div class="section-head">
+      <h2>BibTeX</h2>
+    </div>
+    <div class="bibtex">
+<pre><code>@inproceedings{lee2026katok,
+  title     = {Keep-or-Drop? Adaptive Tokenizer for Compact Video Representation},
+  author    = {Lee, Yeonkyeong and Go, Hyunsung and Kim, Jongmin and Lim, Sewoong and Lee, Donghoon},
+  booktitle = {European Conference on Computer Vision (ECCV)},
+  year      = {2026}
+}</code></pre>
+    </div>
+  </section>
+
+  <footer>
+    KATok · Kakao Corp.
+  </footer>
+</main>
+
+<script>
+(function () {
+  var nav = document.querySelector('.topbar');
+  if (!nav) return;
+
+  var lastY = window.scrollY;
+  var threshold = 24;
+  var delta = 8;
+
+  function updateNav() {
+    var currentY = window.scrollY;
+    var atTop = currentY <= threshold;
+
+    nav.classList.toggle('is-floating', !atTop);
+
+    if (atTop) {
+      nav.classList.remove('is-hidden');
+      lastY = currentY;
+      return;
+    }
+
+    if (Math.abs(currentY - lastY) < delta) {
+      return;
+    }
+
+    if (currentY > lastY) {
+      nav.classList.add('is-hidden');
+    } else {
+      nav.classList.remove('is-hidden');
+    }
+
+    lastY = currentY;
+  }
+
+  updateNav();
+  window.addEventListener('scroll', updateNav, { passive: true });
+})();
+
+document.querySelectorAll('video').forEach(function (video) {
+  video.addEventListener('error', function () {
+    var figure = video.closest('figure');
+    if (!figure) return;
+    var note = document.createElement('div');
+    note.className = 'pending';
+    note.textContent = 'Clip not built yet. Rebuild the project page media from the repository assets.';
+    video.replaceWith(note);
+  }, true);
+});
+</script>
+
+</body>
+</html>

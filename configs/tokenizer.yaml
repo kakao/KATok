@@ -1,0 +1,51 @@
+# KATok video tokenizer -- released model.
+#
+# Trained on Panda-70M in three stages (single-resolution -> multi-resolution ->
+# adversarial fine-tuning); see the paper for the training schedule. These are the
+# architecture values needed to rebuild the model for inference.
+
+name: katok-video
+
+common:
+  hidden_dim: 768
+  num_heads: 16
+  mlp_ratio: 4.0
+  qk_scale: null
+  dropout: 0.0
+  latent_token_dim: 64
+  # Rescale RoPE spatial ids to a fixed base grid. null keeps absolute patch
+  # indices, which is what the released model was trained with.
+  rope_base_spatial_resolution: null
+
+patchifier:
+  input_dim: 3
+  # Encoder patch size as (t, h, w): the paper's coarse 16^2 x 8 patches.
+  # A 256x256x16 clip becomes 2 x 16 x 16 = 512 latent tokens.
+  scale_factors: [8, 16, 16]
+
+encoder:
+  num_layers: 12
+  n_registers: 2
+
+token_selector:
+  # Register tokens lead the sequence and are never dropped.
+  n_to_keep: 2
+  min_prob: 0.01
+  # Deterministic inference: use the posterior mean instead of sampling.
+  latent_sample: false
+
+decoder:
+  num_layers: 18
+  use_latent_norm: true
+  soft_attn_mask: true
+  # Asymmetric coarse-to-fine decoding: the query grid doubles along every axis,
+  # so the decoder reconstructs on 8^2 x 4 patches (4096 query tokens at 256x256x16).
+  upsample: true
+  # Apply the token-drop mask as a key-only bias instead of an N x N mask. Uses
+  # FlashAttention when installed and an equivalent SDPA path otherwise.
+  use_kv_bias_trick: true
+
+unpatchifier:
+  output_dim: 3
+  # Decoder patch size as (t, h, w).
+  scale_factors: [4, 8, 8]

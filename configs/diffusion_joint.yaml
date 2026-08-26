@@ -1,0 +1,45 @@
+# Joint content-position generation -- the paper's ablation variant.
+#
+# Positions ride along as 3 extra channels (64 content + 3 coordinates = 67) and are
+# denoised in the same pass as the content, on a separate time schedule.
+
+name: katok-diffusion-joint
+variant: joint
+
+model:
+  input_dim: 67            # 64 content channels + raw (t, h, w)
+  hidden_size: 1152        # SiT-XL
+  depth: 28
+  num_heads: 16
+  mlp_ratio: 4.0
+  class_dropout_prob: 0.1
+  num_classes: 101         # UCF-101; index 101 is the unconditional slot
+  max_tokens: 8192
+  embed_token_len: true
+  token_len_dropout_prob: 0.0
+  # 1D sinusoidal embedding over packing order, not spatial position -- spatial
+  # information comes from the coordinate channels.
+  sinusoidal_1d_pos_embed: true
+  predict_pos: true
+  use_position_prior: false
+  qk_norm: true
+
+sampling:
+  n_registers: 2
+  patch_grid: [2, 16, 16]
+  cfg_scale: 4.0
+  num_steps: 50
+
+  # Logit-normal timestep shift per channel group. The solver runs t = 0 (noise)
+  # to t = 1 (data), so a positive pos_mu advances the position channels ahead of
+  # the content, letting spatial layout settle first.
+  content_mu: 0.0
+  content_sigma: 1.0
+  pos_mu: 2.0
+  pos_sigma: 0.3
+
+  # The (t, h, w) coordinate channels were whitened with these per-axis statistics
+  # during training (empirical stats of kept-token coordinates on the 2x16x16 grid),
+  # so generated positions come back in that space and are un-whitened on the way out.
+  pos_channel_mean: [-0.240, 0.015, -0.001]
+  pos_channel_std: [0.971, 0.597, 0.607]
