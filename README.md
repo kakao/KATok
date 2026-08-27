@@ -5,7 +5,7 @@
 Official repository for **"Keep-or-Drop? Adaptive Tokenizer for Compact Video Representation"** (ECCV 2026).
 
 [![arXiv](https://img.shields.io/badge/arXiv-2608.24293-b31b1b.svg)](https://arxiv.org/abs/2608.24293)
-![Project Page](https://img.shields.io/badge/Project_Page-coming_soon-1c7ed6)
+[![Project Page](https://img.shields.io/badge/Project_Page-KATok-1c7ed6)](https://kakao.github.io/KATok/)
 
 Yeonkyeong Lee, Hyunsung Go, Jongmin Kim, Sewoong Lim, Donghoon Lee<sup>†</sup>
 
@@ -21,8 +21,8 @@ The token count therefore becomes an outcome of the content rather than a preset
 On Panda-70M at 256²×16, KATok reconstructs at **31.24 PSNR / 5.12 rFVD using 366 tokens
 on average**.
 
-This repository contains **inference code and released weights** for the tokenizer and
-for the two diffusion variants built on top of it. Training code is not included.
+This repository contains **inference code** for the tokenizer and for the two diffusion
+variants built on top of it. Training code is not included.
 
 ---
 
@@ -41,25 +41,7 @@ Set `ATTN_BACKEND=sdpa` to force the pure-PyTorch path.
 
 ## Weights
 
-> The released weights will be hosted on the Hugging Face Hub — publication is
-> pending internal review. Until then `download_weights.py` has no repo to pull from.
-
-```bash
-python scripts/download_weights.py -o weights/
-```
-
-The released weights are the EMA parameters the paper evaluates. Each weights
-directory holds `model.safetensors` plus its config (and, for the diffusion models,
-the tokenizer's latent statistics).
-
-
-| Model                | Parameters | Config                           |
-| -------------------- | ---------- | -------------------------------- |
-| Tokenizer            | 340.13M    | `configs/tokenizer.yaml`         |
-| Diffusion — cascaded | 694.65M    | `configs/diffusion_cascade.yaml` |
-| Diffusion — joint    | 686.59M    | `configs/diffusion_joint.yaml`   |
-
-
+> Weight release is under internal review.
 
 
 ## Quickstart
